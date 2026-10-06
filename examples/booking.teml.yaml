@@ -20,7 +20,15 @@ slices:
         - RoomBooked: { bookingId: g, roomNumber: s }
       views:
         - Rooms: [free]
-      status: InDev
+      status: Completed
+
+  - CancelByPhone:
+      agg: Bookings
+      trigger: { screen: RoomSearch }
+      events:
+        - BookingCancelled: { bookingId: g }
+      status: Declined
+      description: Guests cancel online.
 
   - BrowseRooms:
       view: Rooms
