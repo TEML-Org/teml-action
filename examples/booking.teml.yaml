@@ -1,0 +1,37 @@
+# A small model that this repo's own pull requests change, so CI can run the action on itself.
+apiVersion: teml.org/v-alpha-003
+metadata:
+  name: Booking
+
+screens:
+  - RoomSearch:
+
+aggs:
+  - Booking: { bookingId: g, roomNumber: s }
+
+views:
+  - Rooms: { roomNumber: s, free: bool }
+
+slices:
+  - BookRoom:
+      agg: Booking
+      trigger: { screen: RoomSearch }
+      events:
+        - RoomBooked: { bookingId: g, roomNumber: s }
+      views:
+        - Rooms: [free]
+      status: Completed
+
+  - CancelByPhone:
+      agg: Booking
+      trigger: { screen: RoomSearch }
+      events:
+        - BookingCancelled: { bookingId: g }
+      status: Declined
+      description: Guests cancel online.
+
+  - BrowseRooms:
+      view: Rooms
+      readBy:
+        - screen: RoomSearch
+      status: Completed

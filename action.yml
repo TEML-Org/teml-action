@@ -1,0 +1,35 @@
+name: TEML model changes
+description: Comment on a pull request with the changes to its TEML models, links to their boards, and the results of teml check.
+author: TEML-Org
+branding:
+  icon: git-pull-request
+  color: orange
+
+inputs:
+  files:
+    description: Which files are TEML models. One glob per line; ** matches any folders.
+    default: "**/*.teml.yaml"
+  fail-on-error:
+    description: Fail the job when teml check finds an error in a changed model. Sketch warnings never fail it.
+    default: "true"
+  comment:
+    description: Post the comment on the pull request (it is always written to the job summary).
+    default: "true"
+  teml-url:
+    description: Where to download the teml command from.
+    default: https://tools.teml.org/teml.mjs
+  github-token:
+    description: Token used to read the pull request and write the comment. Needs pull-requests write.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: node "$GITHUB_ACTION_PATH/run.mjs"
+      env:
+        TEML_FILES: ${{ inputs.files }}
+        TEML_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        TEML_COMMENT: ${{ inputs.comment }}
+        TEML_URL: ${{ inputs.teml-url }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
