@@ -23,7 +23,7 @@ slices:
       status: Completed
 
   - CancelByPhone:
-      agg: Bookings
+      agg: Booking
       trigger: { screen: RoomSearch }
       events:
         - BookingCancelled: { bookingId: g }
