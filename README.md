@@ -42,6 +42,7 @@ It works in private repositories too: it reads the models with the workflow's ow
 
 The action compares the pull request's merge commit with its base, finds the changed files that match `files`, and runs `teml diff` and `teml check` on each. It downloads the latest `teml` command each run, so it follows the current TEML version.
 
+- A model split across files (TEML spec §3.2) is reported once, under its root file, when the root or any of its parts changes. The parts are the files its `include` lists, and they need not match `files`. A part is never checked on its own; problems in it are annotated on the part's own lines.
 - A pull request that changes no model gets no comment. If a later push removes its model changes, the comment says so.
 - On a pull request from a fork, the token can't write comments; the action then leaves the changes in the job summary and doesn't fail for that reason.
 - Slices are matched by name, so a renamed slice shows as one removed and one added.

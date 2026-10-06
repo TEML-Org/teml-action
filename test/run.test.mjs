@@ -1,7 +1,7 @@
 // Tests for the parts of run.mjs that don't need GitHub. Run with `node --test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { globToRegExp, matcher, changedFiles, parseCheck, annotation, buildComment, MARKER } from "../run.mjs";
+import { globToRegExp, matcher, changedFiles, parseCheck, annotation, buildComment, MARKER, includeOf, partsOf, modelsToReport } from "../run.mjs";
 
 test("globs match repo-relative paths", () => {
   const m = matcher("**/*.teml.yaml");
@@ -50,4 +50,25 @@ test("a comment over GitHub's limit is cut with a note", () => {
   const body = buildComment({ diffs: ["x".repeat(70000)], problems: [], sha: "a", version: "v" });
   assert.ok(body.length <= 65000);
   assert.match(body, /cut to fit GitHub's limit/);
+});
+
+test("include lists are found in block and flow style", () => {
+  assert.deepEqual(includeOf("apiVersion: x\ninclude:\n  - a.teml.yaml   # first\n\n  # comment\n  - \"sub/b.teml.yaml\"\ntypes: []\n"), ["a.teml.yaml", "sub/b.teml.yaml"]);
+  assert.deepEqual(includeOf("include:\n- a.yaml\n- b.yaml\n"), ["a.yaml", "b.yaml"]);
+  assert.deepEqual(includeOf("include: [a.yaml, 'b.yaml'] # parts\n"), ["a.yaml", "b.yaml"]);
+  assert.deepEqual(includeOf("slices: []\n  include:\n    - nested.yaml\n"), []);
+  assert.deepEqual(partsOf("models/hotel.teml.yaml", "include:\n  - parts/a.yaml\n"), ["models/parts/a.yaml"]);
+  assert.deepEqual(partsOf("hotel.teml.yaml", "include: [a.yaml]"), ["a.yaml"]);
+});
+
+test("a changed part is reported under its root, never on its own", () => {
+  const m = matcher("**/*.teml.yaml");
+  const includes = new Map([["m/hotel.teml.yaml", ["m/booking.teml.yaml", "m/stay.teml.yaml"]]]);
+  const report = changes => modelsToReport(changes, includes, m);
+  assert.deepEqual(report([{ status: "M", file: "m/booking.teml.yaml" }, { status: "M", file: "m/stay.teml.yaml" }]), [{ file: "m/hotel.teml.yaml", status: "M" }]);
+  // The root's own status wins, whichever comes first.
+  assert.deepEqual(report([{ status: "A", file: "m/booking.teml.yaml" }, { status: "A", file: "m/hotel.teml.yaml" }]), [{ file: "m/hotel.teml.yaml", status: "A" }]);
+  assert.deepEqual(report([{ status: "M", file: "other.teml.yaml" }, { status: "M", file: "README.md" }]), [{ file: "other.teml.yaml", status: "M" }]);
+  // A part need not match the glob.
+  assert.deepEqual(modelsToReport([{ status: "M", file: "m/x.yaml" }], new Map([["m/r.teml.yaml", ["m/x.yaml"]]]), m), [{ file: "m/r.teml.yaml", status: "M" }]);
 });

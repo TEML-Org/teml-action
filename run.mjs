@@ -1,6 +1,7 @@
 // teml-action: on a pull request, finds the TEML models it changes, describes the changes with
 // `teml diff`, checks them with `teml check`, and posts one comment that it updates on each push.
-// Problems also become annotations on the changed lines. Runs on the Node that GitHub's runners
+// Problems also become annotations on the changed lines. A model split across files (spec §3.2)
+// is reported once, under its root file, when the root or any of its parts changes. Runs on the Node that GitHub's runners
 // have; the teml command is downloaded from tools.teml.org.
 import fs from "fs";
 import path from "path";
@@ -33,6 +34,41 @@ export const matcher = globs => {
 export const changedFiles = (nameStatus, matches) => nameStatus.split("\n").filter(Boolean)
   .map(l => { const [status, file] = l.split("\t"); return { status: status[0], file }; })
   .filter(f => matches(f.file));
+
+// The part paths a root file's include lists, as written: a block list (- path) or a flow
+// list on one line ([a, b]). teml check reports anything wrong with them; this only finds them.
+export function includeOf(text) {
+  const lines = text.split(/\r?\n/), i = lines.findIndex(l => /^include\s*:/.test(l));
+  if (i < 0) return [];
+  const unquote = s => s.trim().replace(/^(["'])(.*)\1$/, "$2");
+  const rest = lines[i].replace(/^include\s*:/, "").replace(/(^|\s)#.*$/, "").trim();
+  if (rest) return rest.startsWith("[") ? rest.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean) : [];
+  const paths = [];
+  for (const l of lines.slice(i + 1)) {
+    if (/^\s*(#.*)?$/.test(l)) continue;
+    const m = l.match(/^\s*-\s+(.+?)(?:\s+#.*)?$/);
+    if (!m) break;
+    paths.push(unquote(m[1]));
+  }
+  return paths;
+}
+
+// root -> its parts, as repo-relative paths.
+export const partsOf = (root, text) => includeOf(text).map(p => path.posix.join(path.posix.dirname(root), p));
+
+// The models to report: a changed model file, or the root of a changed part (whether the part
+// is in the root's include before the PR or after it). A part is never reported on its own.
+// includes: Map(root -> repo-relative part paths), from the base and the head together.
+export function modelsToReport(changes, includes, matches) {
+  const roots = new Map();
+  for (const [root, parts] of includes) for (const p of parts) roots.set(p, [...(roots.get(p) ?? []), root]);
+  const status = new Map(changes.map(c => [c.file, c.status])), out = new Map();
+  for (const { file, status: s } of changes) {
+    if (roots.has(file)) for (const r of roots.get(file)) { if (!out.has(r)) out.set(r, status.get(r) ?? "M"); }
+    else if (matches(file) && !out.has(file)) out.set(file, s);
+  }
+  return [...out].map(([file, status]) => ({ file, status }));
+}
 
 // `teml check` lines "file:12: error E3 where: message" -> problems.
 export const parseCheck = out => [...out.matchAll(/^(.+?):(\d+): (error|warning) (\S+) (.*)$/gm)]
@@ -102,14 +138,26 @@ async function main() {
   // The checkout is the merge of the PR into its base; compare it with the base commit.
   const base = pr.base.sha;
   git("fetch", "--no-tags", "--quiet", "--depth=1", "origin", base);
-  const files = changedFiles(git("diff", "--name-status", "--no-renames", base, "HEAD"), matcher(env("TEML_FILES")));
+  const matches = matcher(env("TEML_FILES"));
+  const atBase = file => { try { return git("show", `${base}:${file}`); } catch { return null; } };
+  // Which model files are roots, and of which parts, before and after the PR.
+  const includes = new Map(), add = (root, text) => {
+    const parts = text == null ? [] : partsOf(root, text);
+    if (parts.length) includes.set(root, [...new Set([...(includes.get(root) ?? []), ...parts])]);
+  };
+  for (const f of git("ls-files").split("\n").filter(matches)) add(f, fs.readFileSync(f, "utf8"));
+  for (const f of git("ls-tree", "-r", "--name-only", base).split("\n").filter(matches)) add(f, atBase(f));
+  const files = modelsToReport(changedFiles(git("diff", "--name-status", "--no-renames", base, "HEAD"), () => true), includes, matches);
   console.log(files.length ? `TEML models changed: ${files.map(f => f.file).join(", ")}` : "No TEML models changed.");
 
   const diffs = [], problems = [];
   for (const { file, status } of files) {
-    const before = path.join(tmp, `before-${diffs.length}.teml.yaml`);
-    if (status === "A") fs.writeFileSync(before, "");
-    else fs.writeFileSync(before, git("show", `${base}:${file}`));
+    // The base version goes in a folder of its own, with its parts beside it as at the base.
+    const dir = path.join(tmp, `before-${diffs.length}`), before = path.join(dir, file);
+    const write = (f, t) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); };
+    const text = status === "A" ? "" : atBase(file) ?? "";
+    write(file, text);
+    for (const p of partsOf(file, text)) { const t = atBase(p); if (t != null) write(p, t); }
     const after = status === "D" ? "/dev/null" : file;
     diffs.push(run("diff", before, after, "--title", `\`${file}\``).stdout);
     if (status !== "D") problems.push(...parseCheck(run("check", file).stdout));
